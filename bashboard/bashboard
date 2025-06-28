@@ -1,0 +1,173 @@
+# Environmental
+[ -f "$HOME/.tether_paths" ] && export TETHER_PATHS="$(tr '\n' ':' < "$HOME/.tether_paths" | sed 's/:$//')"
+
+# Alias Land
+alias editBB="vi ~/.bashboard"
+alias refreshBB="source ~/.bashboard"
+alias home="cd $HOME"
+alias code="gnome-keyring-daemon --start --components=pkcs11,secrets,ssh,gpg && code"
+alias oldfile="find . -maxdepth 1 -type f -printf '%T@ %p\n' | sort -n | tail -n1"
+alias newfile="find . -maxdepth 1 -type f -printf '%T@ %p\n' | sort -n | head -n1"
+alias olddir="find . -maxdepth 1 -type d -printf '%T@ %p\n' | sort -n | tail -n1"
+alias newdir="find . -maxdepth 1 -type d -printf '%T@ %p\n' | sort -n | head -n1"
+alias lsd='echo Trippy, man...'
+alias tabcat="column -s $'\t' -t"
+
+# Function Land
+tether() {
+  local new_path="${1:-$PWD}"
+  local file="$HOME/.tether_paths"
+  local paths=()
+
+  [ -f "$file" ] || touch "$file"
+
+  # Load and sanitize
+  mapfile -t paths < "$file"
+  paths=("${paths[@]/$new_path}")  # remove duplicates
+  paths=("$new_path" "${paths[@]}")  # prepend new path
+  paths=("${paths[@]:0:10}")  # keep only 10 entries
+
+  printf "%s\n" "${paths[@]}" > "$file"
+
+  export TETHER_PATHS="$(IFS=':'; echo "${paths[*]}")"
+
+  echo "Saved to TETHER_PATHS: $new_path"
+}
+
+yank() {
+  local file="$HOME/.tether_paths"
+  local paths=()
+
+  [ -f "$file" ] || { echo "No tethered paths stored."; return 1; }
+  mapfile -t paths < "$file"
+
+  if [ "${#paths[@]}" -eq 0 ]; then
+    echo "Tether list is empty."
+    return 1
+  fi
+
+  echo "Tethered paths:"
+  for i in "${!paths[@]}"; do
+    echo "[$i] ${paths[i]}"
+  done
+
+  read -rp "Choose index to cd into: " index
+
+  if [[ "$index" =~ ^[0-9]+$ ]] && [ "$index" -lt "${#paths[@]}" ]; then
+    cd "${paths[index]}" || echo "Failed to cd to ${paths[index]}"
+  else
+    echo "Invalid selection."
+  fi
+}
+
+tug() {
+  local current="$PWD"
+  local -a parents=()
+  
+  # Gather up to 5 parent directories
+  for ((i = 1; i <= 5; i++)); do
+    current="$(dirname "$current")"
+    # Stop if we reach root
+    [ "$current" == "/" ] && break
+    parents+=("$current")
+  done
+
+  if [ "${#parents[@]}" -eq 0 ]; then
+    echo "You're already at the root directory."
+    return 1
+  fi
+
+  echo "Select a parent directory to cd into:"
+  for i in "${!parents[@]}"; do
+    index=$((i + 1))
+    echo "[$index] ${parents[i]}"
+  done
+
+  read -rp "Enter index (1-${#parents[@]}): " sel
+
+  if [[ "$sel" =~ ^[1-5]$ ]] && [ "$sel" -le "${#parents[@]}" ]; then
+    cd "${parents[sel-1]}" || echo "Failed to cd into ${parents[sel-1]}"
+  else
+    echo "Invalid selection."
+  fi
+}
+
+krum() {
+  local mode="content"
+  local case_flag="-i"
+  local maxdepth=""
+  local pattern=""
+  local dir="."
+  local ext=""
+  local enable_preview=false
+  local include_hidden=false
+  local depth_default=5
+
+  # Parse flags
+  while [[ "$1" =~ ^- || "$1" == "--preview" || "$1" == "--all" ]]; do
+    case "$1" in
+      -f) mode="file"; shift ;;
+      -c) case_flag=""; shift ;;
+      -d) maxdepth="$2"; shift 2 ;;
+      -t) ext="$2"; shift 2 ;;
+      --preview) enable_preview=true; shift ;;
+      --all) include_hidden=true; shift ;;
+      *) echo "Unknown flag: $1"; return 1 ;;
+    esac
+  done
+
+  pattern="$1"; shift || { echo "Usage: krum [-f] [-c] [-d N] [-t EXT] [--preview] [--all] <pattern> [dir]"; return 1; }
+  [[ -n "$1" ]] && dir="$1"
+  [[ -z "$maxdepth" ]] && maxdepth="$depth_default"
+
+  local find_hidden_arg=""
+  local rg_hidden_flag=""
+  local ignore_dirs="-path */.git -o -path */node_modules -o -path */venv"
+
+  if ! $include_hidden; then
+    # still skip system-noisy stuff even if --all is passed
+    find_hidden_arg="\( $ignore_dirs \) -prune -o"
+  else
+    rg_hidden_flag="--hidden"
+  fi
+
+  local find_ext_filter=""
+  [[ -n "$ext" ]] && find_ext_filter="-name *.$ext"
+
+  local preview_flag=()
+  if $enable_preview; then
+    preview_flag=(--preview="echo {} | cut -d':' -f1 | xargs -r cat" --preview-window=up:50%)
+  fi
+  
+  if [[ "$mode" == "file" ]]; then
+    [[ -n "$ext" ]] && find_ext_filter=(-name "*.$ext") || find_ext_filter=()
+    find "$dir" -maxdepth "$maxdepth" $find_hidden_arg -type f \
+      "${find_ext_filter[@]}" -print 2>/dev/null |
+    grep -E "$case_flag$pattern" |
+    fzf --prompt="file > " "${preview_flag[@]}" || return 0
+  else
+    local search_files
+    search_files=$(find "$dir" -maxdepth "$maxdepth" $find_hidden_arg -type f \
+      ${find_ext_filter:+\( $find_ext_filter \)} -readable -print 2>/dev/null)
+
+    local result_list=""
+    if command -v rg &>/dev/null; then
+      result_list=$(rg $rg_hidden_flag --line-number $case_flag --max-depth "$maxdepth" \
+        ${ext:+-g "*.$ext"} -- "$pattern" "$dir" 2>/dev/null)
+    else
+      result_list=$(grep -Hn $case_flag -- "$pattern" $search_files 2>/dev/null)
+    fi
+
+    [[ -z "$result_list" ]] && echo "No matches found." && return 0
+
+    local selected
+    selected=$(echo "$result_list" | fzf --prompt="match > " "${preview_flag[@]}") || return 0
+
+    local file line
+    file=$(echo "$selected" | cut -d':' -f1)
+    line=$(echo "$selected" | cut -d':' -f2)
+
+    [[ -n "$file" && -n "$line" ]] && vim +"$line" "$file"
+  fi
+}
+
