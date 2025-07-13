@@ -101,8 +101,20 @@ krum() {
   local ext=""
   local enable_preview=false
   local include_hidden=false
-  local depth_default=5
+  local depth_default=10
 
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: krum [-f] [-c] [-d N] [-t EXT] [--preview] [--all] <pattern> [dir]"
+    echo "  -f         : file name search mode"
+    echo "  -c         : case sensitive search"
+    echo "  -d N       : max search depth (default: 10)"
+    echo "  -t EXT     : restrict to file extension EXT"
+    echo "  --preview  : show file preview in fzf"
+    echo "  --all      : include hidden/system dirs"
+    echo "  <pattern>  : search pattern (required)"
+    echo "  [dir]      : directory to search (default: .)"
+    return 1
+  fi
   # Parse flags
   while [[ "$1" =~ ^- || "$1" == "--preview" || "$1" == "--all" ]]; do
     case "$1" in
